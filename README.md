@@ -1,4 +1,4 @@
-# CS5180 Sequential Recommendation with Reinforcement Learning
+# CS5180 Reinforcement Learning-Based Fatigue-Aware Recommendation
 
 A reinforcement learning-based movie recommendation system built on MovieLens 1M,
 developed as the course project for CS5180 (Reinforcement Learning) at Northeastern University.
