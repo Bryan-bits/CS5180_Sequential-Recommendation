@@ -19,7 +19,7 @@ project, which provides `P(like | user, movie)` as the reward signal for RL trai
 ## Two-Course Architecture
 
 ```
-CS6140 (Machine Learning)              CS5180 (Reinforcement Learning)
+Machine Learning                         Reinforcement Learning
 ─────────────────────────              ──────────────────────────────
 MovieLens 1M historical data           RL Agent (DQN / PPO)
         ↓                                          ↓
