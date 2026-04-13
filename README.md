@@ -9,7 +9,8 @@ developed as the course project for CS5180 (Reinforcement Learning) at Northeast
 
 This project frames sequential movie recommendation as a Markov Decision Process (MDP),
 where an RL agent learns to recommend movie genres to maximize cumulative user satisfaction
-over a session, while avoiding recommendation fatigue.
+over a session. We investigate whether a sequence-aware user simulator (GRU4Rec) captures
+recommendation fatigue and whether RL agents can exploit that signal.
 
 The User Simulator (GRU4Rec) is trained as part of the companion CS6140 (Machine Learning)
 project, which provides `P(like | user, movie)` as the reward signal for RL training.
@@ -19,99 +20,116 @@ project, which provides `P(like | user, movie)` as the reward signal for RL trai
 ## Two-Course Architecture
 
 ```
-Machine Learning                         Reinforcement Learning
-─────────────────────────              ──────────────────────────────
-MovieLens 1M historical data           RL Agent (DQN / PPO)
+Machine Learning (CS6140)                Reinforcement Learning (CS5180)
+──────────────────────────               ──────────────────────────────
+MovieLens 1M historical data             RL Agent (DQN / PPO)
         ↓                                          ↓
-Train User Simulator:                  Recommends genre to user
+Train User Simulator:                    Recommends genre to user
   XGBoost (static baseline)                        ↓
-  GRU4Rec (sequence-aware)   →→→→→   Simulator returns reward
-        ↓                              sampled from Bernoulli(P(like))
+  GRU4Rec (sequence-aware)   →→→→→     Simulator returns reward
+        ↓                                sampled from Bernoulli(P(like))
 P(like | user, movie)                              ↓
-                                       Agent updates policy
+                                         Agent updates policy
                                                    ↓
-                                       Next state = updated genre counts
+                                         Next state = updated genre counts
 ```
 
 ---
 
 ## MDP Formulation
 
-| Component | Definition |
-|---|---|
-| **State** | 68-dim: SVD user embedding (50) + recent genre counts (18) |
-| **Action** | 18 genre indices; env selects highest P(like) movie within genre |
-| **Reward** | Bernoulli(P(like)) − fatigue penalty (hand-crafted linear rule) |
-| **Episode** | T = 20 recommendation steps per user session |
-| **Transition** | State updates via recent_genre_counts sliding window |
+| Component      | Definition                                                         |
+|----------------|--------------------------------------------------------------------|
+| **State**      | 68-dim: SVD user embedding (50) + recent genre counts (18)        |
+| **Action**     | 18 genre indices; env selects best movie within genre via history  |
+| **Reward**     | Bernoulli(clip(P(like), 0.1, 0.9))                                |
+| **Episode**    | T = 20 recommendation steps per user session                      |
+| **Transition** | State updates via recent_genre_counts sliding window (w=10)       |
 
 ---
 
 ## Key Design Decisions
 
 **Why genre as action (not movie)?**
-- Movie pool has 3,706 entries — action space too large for stable DQN
-- Genre (18) captures the diversity/fatigue signal that matters
-- Movie sub-selection handled separately by env
+Movie pool has 3,706 entries — too large for stable DQN. Genre (18) reduces the action
+space while capturing the diversity signal. Movie sub-selection is handled separately
+by the environment using historical user ratings.
 
-**Why `recent_genre_counts` in state (not `liked_history_embed`)?**
-- SVD embedding mean compresses sequence info → DQN can't decode fatigue signal
-- `recent_genre_counts[i]` directly tells DQN how many times genre i appeared recently
-- Linear, readable signal → Q-network learns fatigue avoidance easily
+**Why `recent_genre_counts` in state?**
+SVD embedding mean compresses sequence info, making it hard for the Q-network to detect
+repetition. `recent_genre_counts[i]` directly encodes how often genre i appeared in the
+recent window — a linear, readable signal for fatigue avoidance.
 
-**Why User Simulator instead of directly using historical data?**
-- DQN needs 120,000+ interactions during training
-- Historical data can't answer counterfactual questions
-  ("what if we recommended X instead of Y?")
-- Simulator enables exploration of unseen recommendation sequences
+**Why User Simulator instead of historical data?**
+DQN needs 120,000+ interactions during training. Historical data can't answer counterfactual
+questions ("what if we recommended X instead of Y?"). A simulator enables exploration of
+unseen recommendation sequences.
 
 ---
 
-## Results (T=20, 200 evaluation episodes)
+## Results (T=20, 500 evaluation episodes)
 
 ### Bernoulli Reward (sampled)
 ```
-Policy                         Mean     Std
-------------------------------------------------------------
-Random                        10.95 ±  2.20
-Greedy-CTR                    12.28 ±  2.43
-DQN                           12.44 ±  2.54
+Policy                    Mean     Std
+----------------------------------------------
+Random                   10.21 ±  2.46
+Greedy-CTR               11.50 ±  2.78
+DQN                      11.21 ±  2.73
+PPO                      12.78 ±  2.42
 
-DQN vs Greedy-CTR : +0.16
+DQN vs Greedy-CTR : -0.28  (p=0.106, not significant)
+PPO vs Greedy-CTR : +1.29  (p<0.001, significant)
 ```
 
-### Expected Reward (p_like accumulated, no Bernoulli noise)
+### Expected Reward (P(like) accumulated, no Bernoulli noise)
 ```
-Policy                         Mean     Std
-------------------------------------------------------------
-Random                        10.978 ±  0.987
-Greedy (expected)             12.163 ±  1.338
-DQN (expected)                12.736 ±  1.396
+Policy                    Mean     Std
+----------------------------------------------
+Random                   10.12 ±  1.24
+Greedy-CTR               11.39 ±  1.95
+DQN                      11.11 ±  1.76
+PPO                      12.90 ±  1.34
 
-DQN vs Greedy (expected) : +0.572
+PPO vs Greedy-CTR (expected) : +1.51
 ```
 
-**Finding:** Bernoulli sampling introduces variance that masks DQN's true policy advantage.
-Expected reward is the primary evaluation metric.
+### Ablation: State without Genre Counts (50-dim)
+```
+Policy                    Full State    No Genre Counts
+-------------------------------------------------------
+DQN                       11.21         11.96
+PPO                       12.78         12.76
+```
+
+DQN performs *worse* with genre counts, suggesting it uses the signal
+counterproductively. PPO's performance is unchanged, indicating it relies
+entirely on user embeddings for genre selection.
 
 ---
 
-## Genre Preference Analysis (DQN vs Greedy-CTR, 500 steps)
+## Key Findings
 
-```
-Genre             DQN    CTR    Diff
-----------------------------------------
-Fantasy           194      0    +194  ←  DQN concentrates here
-War               160     40    +120  ←
-Film-Noir         111    120      -9
-Animation           0    100    -100  ←  CTR concentrates here
-Musical             0     60     -60  ←
-Thriller            0     60     -60  ←
-Adventure          16     40     -24
-```
+**GRU4Rec does not capture genre fatigue.**
+Fatigue probing shows P(like) is flat across k=0 to k=4 same-genre repetitions
+(~0.51 ± 0.15). Paired comparison (same-genre vs mixed-genre history) yields
+a mean delta of -0.0007 — no fatigue signal exists in the simulator.
 
-DQN exhibits genre concentration (reward hacking) — exploiting simulator bias
-rather than learning a generalizable diversity strategy.
+**DQN exhibits genre concentration (reward hacking).**
+DQN allocates 80% of recommendations to Comedy, exploiting the genre's large
+movie pool rather than learning a diversity strategy. This causes it to
+underperform Greedy-CTR.
+
+**PPO's advantage comes from preference learning, not fatigue avoidance.**
+PPO significantly outperforms Greedy-CTR (+1.29), but the ablation study
+shows this advantage is preserved without genre counts. PPO learns better
+user-genre preferences from SVD embeddings alone.
+
+**The simulator is the bottleneck.**
+GRU4Rec achieves 0.72 AUC — modest for a reward model. The absence of a
+fatigue signal means RL agents cannot learn fatigue avoidance regardless of
+architecture. Improving the simulator (or adding explicit fatigue modeling)
+is the highest-leverage next step.
 
 ---
 
@@ -119,53 +137,62 @@ rather than learning a generalizable diversity strategy.
 
 ```
 CS5180-RL-Recommendation/
-├── README.md
 ├── .gitignore
-├── notebooks/
-│   └── cs5180_v6_final.ipynb     # Complete pipeline: env + baselines + DQN + PPO
-└── data/
-    └── README.md                 # Instructions to download MovieLens 1M
+├── README.md
+├── main.ipynb                  # 11-cell notebook: load → EDA → train → eval
+│
+├── data_setup.py               # Data pipeline (download, load, SVD, XGBoost)
+├── eda.py                      # EDA functions + derived feature generation
+├── gru4rec.py                  # GRU4Rec model, training, inference, fatigue eval
+├── env.py                      # RL environment + ablation variant
+├── baselines.py                # Random, Greedy-CTR, expected-reward helpers
+├── evaluate.py                 # Evaluation pipeline, plots, save artifacts
+│
+├── experiments/
+│   ├── __init__.py
+│   └── tune_xgb.py            # Optuna hyperparameter tuning for XGBoost
+│
+├── eda/                        # Generated by run_all_eda()
+│   ├── 01_rating_distribution.png
+│   ├── ...
+│   └── 09_policy_comparison.png
+│
+├── outputs/                    # Generated by save_all_artifacts()
+│   ├── simulators/             # xgb_simulator.json, gru4rec_best.pt
+│   ├── embeddings/             # U_embed.npy, M_embed.npy
+│   └── agents/                 # dqn_v8.zip, ppo_v8.zip, ablation models
+│
+└── ml-1m/                      # MovieLens 1M (auto-downloaded, gitignored)
 ```
 
 ---
 
 ## Setup
 
-**Dataset**
-
-Download [MovieLens 1M](https://grouplens.org/datasets/movielens/1m/) and place
-the `.dat` files in your Google Drive:
-
-```
-/content/drive/MyDrive/cs5180/
-    movies.dat
-    ratings.dat
-    users.dat
-```
-
-**Dependencies**
+**Quick Start**
 
 ```bash
-pip install numpy pandas scipy xgboost scikit-learn gymnasium stable-baselines3 torch
+pip install numpy pandas scipy xgboost scikit-learn gymnasium stable-baselines3 torch seaborn optuna
 ```
 
-**Running**
+Then open `main.ipynb` and run cells 1–11. Cell 1 auto-downloads MovieLens 1M
+if the `ml-1m/` folder doesn't exist.
 
-1. Mount Google Drive and load `movies`, `ratings`, `users` DataFrames
-2. Run all `[DATA SETUP]` cells top to bottom (required on every Colab restart)
-3. Load GRU4Rec simulator weights from Drive (`gru4rec_best.pt`)
-4. Run `[MODEL/ALGO]` cells for DQN / PPO training and evaluation
+**From Scratch (no pretrained weights)**
 
----
-
-## .gitignore
-
+In Cell 4 of the notebook, use Option B to train GRU4Rec:
+```python
+from gru4rec import train_gru4rec, make_gru4rec_p_like
+gru4rec_model  = train_gru4rec(ctx, save_dir="outputs/simulators", n_epochs=50)
+gru4rec_p_like = make_gru4rec_p_like(gru4rec_model, movie2idx, T=20)
 ```
-*.pkl
-*.pt
-*.zip
-*.npy
-*.dat
-__pycache__/
-.ipynb_checkpoints/
+
+**With Pretrained Weights**
+
+Place checkpoint files in `outputs/simulators/` and `outputs/embeddings/`,
+then use Option A in Cell 4:
+```python
+from gru4rec import load_gru4rec, make_gru4rec_p_like
+gru4rec_model  = load_gru4rec("outputs/simulators/gru4rec_best.pt", n_movies=len(movie2idx))
+gru4rec_p_like = make_gru4rec_p_like(gru4rec_model, movie2idx, T=20)
 ```

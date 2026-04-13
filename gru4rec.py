@@ -9,11 +9,11 @@ Usage:
     from gru4rec import load_gru4rec, make_gru4rec_p_like, train_gru4rec
 
     # Option A: load pretrained
-    model = load_gru4rec("models/gru4rec_best.pt", n_movies, device)
+    model = load_gru4rec("outputs/simulators/gru4rec_best.pt", n_movies, device)
     gru4rec_p_like = make_gru4rec_p_like(model, movie2idx, T=20)
 
     # Option B: train from scratch
-    model = train_gru4rec(ctx, save_dir="models", n_epochs=30)
+    model = train_gru4rec(ctx, save_dir="outputs/simulators", n_epochs=30)
 """
 
 import os
@@ -39,15 +39,18 @@ class GRU4RecSimulator(nn.Module):
     padding_idx=0 is reserved. All data prep must apply this +1 offset.
     """
 
-    def __init__(self, n_movies, embed_dim=50, hidden_dim=128, T=20):
+    def __init__(self, n_movies, embed_dim=50, hidden_dim=128, T=20, dropout=0.3):
         super().__init__()
         self.T = T
         self.movie_embed = nn.Embedding(n_movies + 1, embed_dim, padding_idx=0)
+        self.embed_drop = nn.Dropout(dropout)
         self.gru = nn.GRU(input_size=embed_dim, hidden_size=hidden_dim,
-                          batch_first=True)
+                          batch_first=True, dropout=0.0)  # single layer, no GRU dropout
         self.fc = nn.Sequential(
+            nn.Dropout(dropout),
             nn.Linear(hidden_dim + embed_dim, 64),
             nn.ReLU(),
+            nn.Dropout(dropout),
             nn.Linear(64, 1),
             nn.Sigmoid(),
         )
@@ -60,7 +63,7 @@ class GRU4RecSimulator(nn.Module):
         Returns:
             (batch,) float tensor of P(like)
         """
-        seq_embed = self.movie_embed(sequence)
+        seq_embed = self.embed_drop(self.movie_embed(sequence))
         _, hidden = self.gru(seq_embed)
         hidden = hidden.squeeze(0)
         next_embed = self.movie_embed(next_movie)
@@ -135,16 +138,18 @@ def _evaluate_auc(model, loader, device):
     return roc_auc_score(labels, preds)
 
 
-def train_gru4rec(ctx, save_dir="models", n_epochs=30, patience=5,
-                  batch_size=512, lr=1e-3, embed_dim=50, hidden_dim=128, T=20):
+def train_gru4rec(ctx, save_dir="outputs/simulators", n_epochs=50, patience=8,
+                  batch_size=512, lr=5e-4, weight_decay=1e-4,
+                  embed_dim=50, hidden_dim=128, dropout=0.3, T=20):
     """
     Train GRU4Rec from scratch using ctx from load_all().
 
     Args:
-        ctx:       dict from data_setup.load_all()
-        save_dir:  directory to save best checkpoint
-        n_epochs:  max training epochs
-        patience:  early stopping patience
+        ctx:          dict from data_setup.load_all()
+        save_dir:     directory to save best checkpoint
+        n_epochs:     max training epochs
+        patience:     early stopping patience
+        weight_decay: L2 regularization
 
     Returns:
         trained GRU4RecSimulator in eval mode
@@ -169,8 +174,12 @@ def train_gru4rec(ctx, save_dir="models", n_epochs=30, patience=5,
                              shuffle=False, num_workers=0)
 
     # Init model
-    model = GRU4RecSimulator(len(movie2idx), embed_dim, hidden_dim, T).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    model = GRU4RecSimulator(len(movie2idx), embed_dim, hidden_dim, T,
+                             dropout=dropout).to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr,
+                                weight_decay=weight_decay)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="max", factor=0.5, patience=3)
     criterion = nn.BCELoss()
 
     os.makedirs(save_dir, exist_ok=True)
@@ -179,7 +188,8 @@ def train_gru4rec(ctx, save_dir="models", n_epochs=30, patience=5,
     best_auc = 0
     no_improve = 0
 
-    print(f"[gru4rec] Training ({n_epochs} epochs, patience={patience}) ...")
+    print(f"[gru4rec] Training ({n_epochs} epochs, patience={patience}, "
+          f"dropout={dropout}, wd={weight_decay}) ...")
     for epoch in range(n_epochs):
         model.train()
         total_loss = 0.0
@@ -193,12 +203,17 @@ def train_gru4rec(ctx, save_dir="models", n_epochs=30, patience=5,
             pred = model(seq, next_movie)
             loss = criterion(pred, label)
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
             total_loss += loss.item()
 
         avg_loss = total_loss / len(train_loader)
         auc = _evaluate_auc(model, test_loader, device)
-        print(f"  Epoch {epoch+1:2d}/{n_epochs}  loss={avg_loss:.4f}  AUC={auc:.4f}")
+        current_lr = optimizer.param_groups[0]["lr"]
+        print(f"  Epoch {epoch+1:2d}/{n_epochs}  loss={avg_loss:.4f}  "
+              f"AUC={auc:.4f}  lr={current_lr:.1e}")
+
+        scheduler.step(auc)
 
         if auc > best_auc:
             best_auc = auc
@@ -223,12 +238,14 @@ def train_gru4rec(ctx, save_dir="models", n_epochs=30, patience=5,
 # 3. Loading & Inference
 # ============================================================
 
-def load_gru4rec(path, n_movies, device=None, embed_dim=50, hidden_dim=128, T=20):
+def load_gru4rec(path, n_movies, device=None, embed_dim=50, hidden_dim=128,
+                 T=20, dropout=0.3):
     """Load a pretrained GRU4Rec model from disk."""
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    model = GRU4RecSimulator(n_movies, embed_dim, hidden_dim, T).to(device)
+    model = GRU4RecSimulator(n_movies, embed_dim, hidden_dim, T,
+                             dropout=dropout).to(device)
     model.load_state_dict(torch.load(path, map_location=device))
     model.eval()
     print(f"[gru4rec] Loaded from {path} → {device}")

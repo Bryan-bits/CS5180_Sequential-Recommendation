@@ -283,7 +283,7 @@ def save_all_artifacts(output_dir, model_dqn, model_ppo,
     if model_ppo_ablation is not None:
         model_ppo_ablation.save(os.path.join(agt_dir, "ppo_ablation_v8"))
 
-    print(f"\n[save] All artifacts saved to '{output_dir}/':")
+    print(f"[save] All artifacts saved to '{output_dir}/':")
     for root, dirs, files in os.walk(output_dir):
         level = root.replace(output_dir, "").count(os.sep)
         indent = "  " * level

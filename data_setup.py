@@ -229,7 +229,7 @@ def make_helpers(user2idx, movie2idx, movie_genres, U_embed, M_embed, xgb_model)
 # 8. Main Entry Point
 # ============================================================
 
-def load_all(data_dir: str = "ml-1m", svd_k: int = 50, save_dir: str = "models"):
+def load_all(data_dir: str = "ml-1m", svd_k: int = 50, save_dir: str = "outputs/simulators"):
     """
     Run the full data pipeline and return everything the RL notebook needs.
 

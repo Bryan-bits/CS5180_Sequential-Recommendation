@@ -1,0 +1,26 @@
+# Data
+ml-1m/
+ml-1m.zip
+ 
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+ 
+# Model outputs (large binary files)
+outputs/simulators/*.pt
+outputs/simulators/*.json
+outputs/embeddings/*.npy
+outputs/agents/*.zip
+ 
+# EDA derived data (regenerable)
+eda/*.npy
+eda/*.csv
+ 
+# OS
+.DS_Store
+Thumbs.db
+ 
+# IDE
+.vscode/
+.idea/
