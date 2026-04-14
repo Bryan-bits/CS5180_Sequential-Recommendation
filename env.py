@@ -130,10 +130,29 @@ class FinalMovieRecEnvV6(gym.Env):
     # ── reward ────────────────────────────────────────────────
 
     def _dynamic_p(self, movieId):
-        """Compute P(like) using GRU4Rec sequence-aware simulator."""
         base_p = self.gru4rec_p_like(
             self.current_user, movieId, self.all_recommended)
-        return float(np.clip(base_p, 0.1, 0.9))
+
+        # Window penalty (recent repetition)
+        target_genres = set(self.movie_genres.get(movieId, []))
+        recent = self.all_recommended[-self.window:]
+        same_count = sum(1 for mid in recent
+                        if target_genres & set(self.movie_genres.get(mid, [])))
+        window_penalty = min(0.05 * same_count, 0.25)
+
+        # Concentration penalty (session-level)
+        if self.all_recommended:
+            genre_picks = []
+            for mid in self.all_recommended:
+                genre_picks.extend(self.movie_genres.get(mid, []))
+            total = len(genre_picks) if genre_picks else 1
+            genre_frac = sum(1 for g in genre_picks if g in target_genres) / total
+            concentration_penalty = 0.3 * max(genre_frac - 0.25, 0)  # kick in above 25%
+        else:
+            concentration_penalty = 0
+
+        penalty = window_penalty + concentration_penalty
+        return float(np.clip(base_p - penalty, 0.1, 0.9))
 
     # ── shared step logic ─────────────────────────────────────
 

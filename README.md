@@ -9,8 +9,11 @@ developed as the course project for CS5180 (Reinforcement Learning) at Northeast
 
 This project frames sequential movie recommendation as a Markov Decision Process (MDP),
 where an RL agent learns to recommend movie genres to maximize cumulative user satisfaction
-over a session. We investigate whether a sequence-aware user simulator (GRU4Rec) captures
-recommendation fatigue and whether RL agents can exploit that signal.
+over a session while avoiding recommendation fatigue.
+
+We investigate whether a sequence-aware user simulator (GRU4Rec) captures recommendation
+fatigue, design an explicit fatigue penalty when it doesn't, and compare how value-based
+(DQN) and policy-gradient (PPO) methods handle diversity-requiring reward signals.
 
 The User Simulator (GRU4Rec) is trained as part of the companion CS6140 (Machine Learning)
 project, which provides `P(like | user, movie)` as the reward signal for RL training.
@@ -42,9 +45,21 @@ P(like | user, movie)                              ↓
 |----------------|--------------------------------------------------------------------|
 | **State**      | 68-dim: SVD user embedding (50) + recent genre counts (18)        |
 | **Action**     | 18 genre indices; env selects best movie within genre via history  |
-| **Reward**     | Bernoulli(clip(P(like), 0.1, 0.9))                                |
+| **Reward**     | Bernoulli(clip(P(like) − fatigue_penalty, 0.1, 0.9))             |
 | **Episode**    | T = 20 recommendation steps per user session                      |
 | **Transition** | State updates via recent_genre_counts sliding window (w=10)       |
+
+### Fatigue Penalty Design
+
+The reward includes two penalty components:
+
+**Window penalty:** penalizes recent same-genre repetition within a sliding window.
+`window_penalty = min(0.05 × same_genre_count_in_window, 0.25)`
+
+**Concentration penalty:** penalizes session-level genre dominance above 25% share.
+`concentration_penalty = 0.3 × max(genre_fraction − 0.25, 0)`
+
+These were added after probing revealed GRU4Rec does not inherently capture fatigue.
 
 ---
 
@@ -61,9 +76,13 @@ repetition. `recent_genre_counts[i]` directly encodes how often genre i appeared
 recent window — a linear, readable signal for fatigue avoidance.
 
 **Why User Simulator instead of historical data?**
-DQN needs 120,000+ interactions during training. Historical data can't answer counterfactual
+DQN needs 200,000+ interactions during training. Historical data can't answer counterfactual
 questions ("what if we recommended X instead of Y?"). A simulator enables exploration of
 unseen recommendation sequences.
+
+**Why explicit fatigue penalty?**
+Fatigue probing (see findings below) showed GRU4Rec does not encode genre fatigue.
+Without explicit penalty, RL agents exploit high-like-rate genres rather than diversifying.
 
 ---
 
@@ -73,63 +92,94 @@ unseen recommendation sequences.
 ```
 Policy                    Mean     Std
 ----------------------------------------------
-Random                   10.21 ±  2.46
-Greedy-CTR               11.50 ±  2.78
-DQN                      11.21 ±  2.73
-PPO                      12.78 ±  2.42
+Random                    7.66 ±  2.41
+Greedy-CTR                5.67 ±  2.51
+DQN                       7.22 ±  2.95
+PPO                       9.98 ±  2.54
 
-DQN vs Greedy-CTR : -0.28  (p=0.106, not significant)
-PPO vs Greedy-CTR : +1.29  (p<0.001, significant)
+DQN vs Greedy-CTR : +1.55  (p<0.001, significant)
+PPO vs Greedy-CTR : +4.31  (p<0.001, significant)
 ```
 
 ### Expected Reward (P(like) accumulated, no Bernoulli noise)
 ```
 Policy                    Mean     Std
 ----------------------------------------------
-Random                   10.12 ±  1.24
-Greedy-CTR               11.39 ±  1.95
-DQN                      11.11 ±  1.76
-PPO                      12.90 ±  1.34
+Random                    7.95 ±  1.27
+Greedy-CTR                5.68 ±  1.64
+DQN                       6.84 ±  1.87
+PPO                       9.91 ±  1.47
 
-PPO vs Greedy-CTR (expected) : +1.51
+PPO vs Greedy-CTR (expected) : +4.23
 ```
 
 ### Ablation: State without Genre Counts (50-dim)
 ```
-Policy                    Full State    No Genre Counts
--------------------------------------------------------
-DQN                       11.21         11.96
-PPO                       12.78         12.76
+Policy                    Full State    No Genre Counts    Δ
+-------------------------------------------------------------
+DQN                         7.22            5.17         +2.05
+PPO                         9.98            5.55         +4.43
 ```
 
-DQN performs *worse* with genre counts, suggesting it uses the signal
-counterproductively. PPO's performance is unchanged, indicating it relies
-entirely on user embeddings for genre selection.
+Both agents rely heavily on genre counts. PPO's larger drop (+4.43)
+shows it uses the fatigue signal more effectively than DQN (+2.05).
+
+### Fatigue Probe
+```
+k (same-genre in history)    P(like)
+--------------------------------------
+0                            0.435
+1                            0.391
+2                            0.333
+3                            0.267
+4                            0.206
+
+Δ (k=0 → k=4): 0.228
+Paired probe: 97.5% of pairs show mixed > same history
+Mean delta: 0.231
+```
+
+### Genre Selection Distribution
+```
+Genre           DQN%     PPO%
+---------------------------------
+Children's     46.0%     1.8%   ← DQN concentrates
+War            25.6%    19.7%
+Film-Noir       8.3%    27.0%
+Documentary     0.3%    31.0%   ← PPO favors
+Thriller        9.4%     0.9%
+(12 others)    10.4%    19.6%
+```
 
 ---
 
 ## Key Findings
 
-**GRU4Rec does not capture genre fatigue.**
-Fatigue probing shows P(like) is flat across k=0 to k=4 same-genre repetitions
-(~0.51 ± 0.15). Paired comparison (same-genre vs mixed-genre history) yields
-a mean delta of -0.0007 — no fatigue signal exists in the simulator.
+**1. GRU4Rec does not capture genre fatigue natively.**
+Without explicit penalty, P(like) is flat across same-genre repetitions. RL agents
+exploit high-like-rate genres (80% Comedy or 73% Film-Noir) rather than diversifying.
+The explicit fatigue penalty is necessary to create a learnable diversity signal.
 
-**DQN exhibits genre concentration (reward hacking).**
-DQN allocates 80% of recommendations to Comedy, exploiting the genre's large
-movie pool rather than learning a diversity strategy. This causes it to
-underperform Greedy-CTR.
+**2. PPO significantly outperforms all baselines (+4.31 over Greedy-CTR).**
+PPO learns both genre preferences from user embeddings and fatigue avoidance from
+genre counts. The ablation drop of +4.43 confirms it uses both signals effectively.
 
-**PPO's advantage comes from preference learning, not fatigue avoidance.**
-PPO significantly outperforms Greedy-CTR (+1.29), but the ablation study
-shows this advantage is preserved without genre counts. PPO learns better
-user-genre preferences from SVD embeddings alone.
+**3. DQN underperforms Random due to concentration penalty.**
+DQN converges to a deterministic policy (46% Children's), triggering heavy concentration
+penalties. Random avoids this by uniformly sampling across 18 genres (~5.6% each).
+DQN still beats Greedy-CTR (+1.55), which also concentrates but without learning.
 
-**The simulator is the bottleneck.**
-GRU4Rec achieves 0.72 AUC — modest for a reward model. The absence of a
-fatigue signal means RL agents cannot learn fatigue avoidance regardless of
-architecture. Improving the simulator (or adding explicit fatigue modeling)
-is the highest-leverage next step.
+**4. Diversity-requiring objectives favor stochastic policies.**
+This is the core structural insight: value-based methods (DQN) converge to a single
+best action per state and cannot express "Film-Noir 20%, War 15%, Documentary 15%."
+Policy-gradient methods (PPO) maintain stochastic policies that naturally distribute
+selections across genres while favoring high-value ones. This makes PPO structurally
+better suited for recommendation settings with fatigue or diversity constraints.
+
+**5. Reward design is the bottleneck, not the RL algorithm.**
+Across three reward conditions (no penalty → window penalty → window + concentration),
+the choice of penalty had a larger impact on agent behavior than the choice of algorithm.
+Simulator quality and reward shaping determine the ceiling of RL performance.
 
 ---
 
@@ -139,7 +189,7 @@ is the highest-leverage next step.
 CS5180-RL-Recommendation/
 ├── .gitignore
 ├── README.md
-├── main.ipynb                  # 11-cell notebook: load → EDA → train → eval
+├── main.ipynb                  # 14-cell notebook: load → EDA → train → eval → analysis
 │
 ├── data_setup.py               # Data pipeline (download, load, SVD, XGBoost)
 ├── eda.py                      # EDA functions + derived feature generation
@@ -152,10 +202,13 @@ CS5180-RL-Recommendation/
 │   ├── __init__.py
 │   └── tune_xgb.py            # Optuna hyperparameter tuning for XGBoost
 │
-├── eda/                        # Generated by run_all_eda()
+├── eda/                        # Generated by run_all_eda() + analysis cells
 │   ├── 01_rating_distribution.png
 │   ├── ...
-│   └── 09_policy_comparison.png
+│   ├── 09_policy_comparison.png
+│   ├── 10_genre_distribution.png
+│   ├── 11_ablation_comparison.png
+│   └── 12_fatigue_analysis.png
 │
 ├── outputs/                    # Generated by save_all_artifacts()
 │   ├── simulators/             # xgb_simulator.json, gru4rec_best.pt
@@ -175,7 +228,7 @@ CS5180-RL-Recommendation/
 pip install numpy pandas scipy xgboost scikit-learn gymnasium stable-baselines3 torch seaborn optuna
 ```
 
-Then open `main.ipynb` and run cells 1–11. Cell 1 auto-downloads MovieLens 1M
+Then open `main.ipynb` and run cells 1–14. Cell 1 auto-downloads MovieLens 1M
 if the `ml-1m/` folder doesn't exist.
 
 **From Scratch (no pretrained weights)**

@@ -2,8 +2,6 @@
 gru4rec.py — GRU4Rec User Simulator
 
 Sequence-aware simulator that predicts P(like | viewing_history, next_movie).
-Trained as part of the CS6140 companion project, used as the reward model
-for the CS5180 RL recommendation agent.
 
 Usage:
     from gru4rec import load_gru4rec, make_gru4rec_p_like, train_gru4rec
