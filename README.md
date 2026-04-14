@@ -153,21 +153,67 @@ Thriller        9.4%     0.9%
 
 ---
 
+## Reward Shaping Experiment
+
+We tested four penalty conditions to study how reward design affects agent behavior.
+Full experiment in `experiments/reward_shaping.ipynb`.
+
+### Cross-Condition Summary (T=20, 500 episodes)
+```
+Condition               Random  Greedy     DQN     PPO  PPO vs Greedy
+-----------------------------------------------------------------------
+No penalty                9.67   11.31   13.14   13.30         +1.99
+Window only               7.91    7.47    9.53   10.58         +3.11
+Window + concentration    7.77    5.72    9.73    9.96         +4.23
+Aggressive                6.77    3.63    8.04    9.00         +5.37
+```
+
+PPO's advantage over Greedy-CTR grows monotonically with penalty strength
+(+1.99 → +5.37), confirming it adapts to diversity constraints rather than
+just exploiting base like-rates.
+
+### Fatigue Signal by Condition
+```
+Condition                P(like) k=0   P(like) k=4    Δ
+----------------------------------------------------------
+No penalty                 0.489         0.479       0.009
+Window only                0.445         0.293       0.152
+Window + concentration     0.451         0.223       0.228
+Aggressive                 0.405         0.115       0.289
+```
+
+No penalty: flat (no fatigue signal). Each successive penalty creates a steeper
+decline, giving RL agents a stronger signal to learn from.
+
+### Genre Concentration by Condition (max genre fraction)
+```
+Condition               DQN      PPO
+----------------------------------------
+No penalty              63.3%    62.0%   ← both exploit Film-Noir
+Window only             28.3%    29.5%   ← diversifies to 3 genres
+Window + concentration  35.9%    31.0%   ← further spread
+Aggressive              21.2%    25.6%   ← most diverse
+```
+
+---
+
 ## Key Findings
 
 **1. GRU4Rec does not capture genre fatigue natively.**
-Without explicit penalty, P(like) is flat across same-genre repetitions. RL agents
-exploit high-like-rate genres (80% Comedy or 73% Film-Noir) rather than diversifying.
-The explicit fatigue penalty is necessary to create a learnable diversity signal.
+Without explicit penalty, P(like) is flat across same-genre repetitions (Δ=0.009).
+Both agents exploit Film-Noir at 63%. The explicit fatigue penalty is necessary
+to create a learnable diversity signal.
 
-**2. PPO significantly outperforms all baselines (+4.31 over Greedy-CTR).**
-PPO learns both genre preferences from user embeddings and fatigue avoidance from
-genre counts. The ablation drop of +4.43 confirms it uses both signals effectively.
+**2. PPO significantly outperforms all baselines across all conditions.**
+PPO beats Greedy-CTR in every condition, and its relative advantage grows as
+the penalty strengthens (+1.99 → +3.11 → +4.23 → +5.37). This confirms PPO
+genuinely learns to handle diversity constraints, not just exploit base like-rates.
 
-**3. DQN underperforms Random due to concentration penalty.**
-DQN converges to a deterministic policy (46% Children's), triggering heavy concentration
-penalties. Random avoids this by uniformly sampling across 18 genres (~5.6% each).
-DQN still beats Greedy-CTR (+1.55), which also concentrates but without learning.
+**3. DQN improves with penalty but remains structurally limited.**
+DQN beats Greedy-CTR in all conditions but concentrates more than PPO. As a
+value-based method, it converges to a deterministic policy and cannot express
+stochastic genre mixing. Under the strongest penalty (Condition 3 in main.ipynb),
+DQN can even underperform Random when concentration triggers are severe.
 
 **4. Diversity-requiring objectives favor stochastic policies.**
 This is the core structural insight: value-based methods (DQN) converge to a single
@@ -176,10 +222,11 @@ Policy-gradient methods (PPO) maintain stochastic policies that naturally distri
 selections across genres while favoring high-value ones. This makes PPO structurally
 better suited for recommendation settings with fatigue or diversity constraints.
 
-**5. Reward design is the bottleneck, not the RL algorithm.**
-Across three reward conditions (no penalty → window penalty → window + concentration),
-the choice of penalty had a larger impact on agent behavior than the choice of algorithm.
-Simulator quality and reward shaping determine the ceiling of RL performance.
+**5. Reward design matters more than algorithm choice.**
+Across four penalty conditions, the choice of penalty had a larger impact on agent
+behavior than the choice of algorithm. Greedy-CTR collapses from 11.31 to 3.63
+as penalty strengthens, while PPO adapts from 13.30 to 9.00. Simulator quality
+and reward shaping determine the ceiling of RL performance.
 
 ---
 
@@ -199,7 +246,15 @@ CS5180-RL-Recommendation/
 ├── evaluate.py                 # Evaluation pipeline, plots, save artifacts
 │
 ├── experiments/
-│   ├── __init__.py
+│   ├── reward_shaping.ipynb    # 4-condition penalty comparison experiment
+│   ├── exp1_no_penalty.png
+│   ├── exp2_window_only.png
+│   ├── exp3_window_concentration.png
+│   ├── exp4_aggressive.png
+│   ├── exp_fatigue_comparison.png
+│   └── exp_summary.png
+│
+├── utils/
 │   └── tune_xgb.py            # Optuna hyperparameter tuning for XGBoost
 │
 ├── eda/                        # Generated by run_all_eda() + analysis cells
