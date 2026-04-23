@@ -1,5 +1,4 @@
-# CS5180 Simulator-Based Offline Reinforcement Learning for Sequential Recommendation
-- Effects of Fatigue-Aware Reward Design on PPO and DQN
+# CS5180 Simulator-Based Offline Reinforcement Learning for Sequential Recommendation - Effects of Fatigue-Aware Reward Design on PPO and DQN
 
 A reinforcement learning-based movie recommendation system built on MovieLens 1M,
 developed as the course project for CS5180 (Reinforcement Learning) at Northeastern University.
