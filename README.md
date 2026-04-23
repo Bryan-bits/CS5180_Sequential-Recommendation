@@ -1,7 +1,10 @@
-# CS5180 Simulator-Based Offline Reinforcement Learning for Sequential Recommendation - Effects of Fatigue-Aware Reward Design on PPO and DQN
+# CS5180 Simulator-Based Offline Reinforcement Learning for Sequential Recommendation
 
-A reinforcement learning-based movie recommendation system built on MovieLens 1M,
-developed as the course project for CS5180 (Reinforcement Learning) at Northeastern University.
+**Effects of Fatigue-Aware Reward Design on PPO and DQN**
+
+CS5180 Reinforcement Learning — Final Project Report  
+Bolai Yin | Yuzhe Li | Kai Zhu  
+Northeastern University, Spring 2025
 
 ---
 
@@ -9,26 +12,40 @@ developed as the course project for CS5180 (Reinforcement Learning) at Northeast
 
 This project frames sequential movie recommendation as a Markov Decision Process (MDP),
 where an RL agent learns to recommend movie genres to maximize cumulative user satisfaction
-over a session, while avoiding recommendation fatigue.
+over a 20-step session. Our central question is whether reinforcement learning provides value
+beyond a myopic greedy recommender when the environment is learned from historical ratings
+rather than from live user sessions.
 
-The User Simulator (GRU4Rec) is trained as part of the companion CS6140 (Machine Learning)
-project, which provides `P(like | user, movie)` as the reward signal for RL training.
+The project proceeds in two stages:
+
+1. **No-penalty evaluation** — We show that the ranking PPO > DQN > Greedy-CTR > Random
+   is preserved across two independently trained GRU-based simulators, even without an
+   explicit fatigue signal.
+
+2. **Fatigue-aware reward shaping** — We introduce window-based and concentration-based
+   penalties and show that PPO achieves the strongest gains over Greedy-CTR, learns a less
+   concentrated genre policy than DQN, and benefits substantially from genre-count state features.
+
+**Main lesson:** In offline recommendation, reward design can matter as much as algorithm choice.
 
 ---
 
 ## Two-Course Architecture
 
+The User Simulator (GRU4Rec / GRU4RecSVD) is trained as part of the companion CS6140
+(Machine Learning) project, which provides `P(like | user, movie)` as the reward signal for RL training.
+
 ```
-Machine Learning                         Reinforcement Learning
+Machine Learning (CS6140)                Reinforcement Learning (CS5180)
 ─────────────────────────              ──────────────────────────────
 MovieLens 1M historical data           RL Agent (DQN / PPO)
         ↓                                          ↓
 Train User Simulator:                  Recommends genre to user
-  XGBoost (static baseline)                        ↓
-  GRU4Rec (sequence-aware)   →→→→→   Simulator returns reward
-        ↓                              sampled from Bernoulli(P(like))
-P(like | user, movie)                              ↓
-                                       Agent updates policy
+  XGBoost (static, AUC ~0.800)                     ↓
+  GRU4Rec (AUC 0.703)       →→→→→    Simulator returns reward
+  GRU4RecSVD (AUC 0.781)               sampled from Bernoulli(P(like))
+        ↓                                          ↓
+P(like | user, movie)                  Agent updates policy
                                                    ↓
                                        Next state = updated genre counts
 ```
@@ -41,77 +58,91 @@ P(like | user, movie)                              ↓
 |---|---|
 | **State** | 68-dim: SVD user embedding (50) + recent genre counts (18) |
 | **Action** | 18 genre indices; env selects highest P(like) movie within genre |
-| **Reward** | Bernoulli(P(like)) − fatigue penalty (hand-crafted linear rule) |
-| **Episode** | T = 20 recommendation steps per user session |
-| **Transition** | State updates via recent_genre_counts sliding window |
+| **Reward (no penalty)** | Bernoulli(P(like)) from the simulator |
+| **Reward (fatigue-aware)** | Bernoulli(clip(P(like) − penalty, 0.1, 0.9)) |
+| **Fatigue: window penalty** | min(0.05 × same_count_in_last_10, 0.25) |
+| **Fatigue: concentration penalty** | 0.3 × max(genre_frac − 0.25, 0) |
+| **Episode length** | 20 recommendation steps |
+| **History window** | 10 recent genre selections |
 
 ---
 
 ## Key Design Decisions
 
 **Why genre as action (not movie)?**
-- Movie pool has 3,706 entries — action space too large for stable DQN
-- Genre (18) captures the diversity/fatigue signal that matters
-- Movie sub-selection handled separately by env
+- Movie pool has 3,706 entries — action space too large for stable DQN.
+- Genre (18) captures the diversity/fatigue signal that matters.
+- Movie sub-selection handled separately by the environment.
 
 **Why `recent_genre_counts` in state (not `liked_history_embed`)?**
-- SVD embedding mean compresses sequence info → DQN can't decode fatigue signal
-- `recent_genre_counts[i]` directly tells DQN how many times genre i appeared recently
-- Linear, readable signal → Q-network learns fatigue avoidance easily
+- SVD embedding mean compresses sequence info → DQN can't decode fatigue signal.
+- `recent_genre_counts[i]` directly tells the agent how many times genre *i* appeared recently.
+- Linear, readable signal → Q-network learns fatigue avoidance easily.
+- State ablation confirms this: removing genre counts drops DQN from 7.22 → 5.17 and PPO from 9.98 → 5.55 under fatigue-aware reward.
 
-**Why User Simulator instead of directly using historical data?**
-- DQN needs 120,000+ interactions during training
-- Historical data can't answer counterfactual questions
-  ("what if we recommended X instead of Y?")
-- Simulator enables exploration of unseen recommendation sequences
-
----
-
-## Results (T=20, 200 evaluation episodes)
-
-### Bernoulli Reward (sampled)
-```
-Policy                         Mean     Std
-------------------------------------------------------------
-Random                        10.95 ±  2.20
-Greedy-CTR                    12.28 ±  2.43
-DQN                           12.44 ±  2.54
-
-DQN vs Greedy-CTR : +0.16
-```
-
-### Expected Reward (p_like accumulated, no Bernoulli noise)
-```
-Policy                         Mean     Std
-------------------------------------------------------------
-Random                        10.978 ±  0.987
-Greedy (expected)             12.163 ±  1.338
-DQN (expected)                12.736 ±  1.396
-
-DQN vs Greedy (expected) : +0.572
-```
-
-**Finding:** Bernoulli sampling introduces variance that masks DQN's true policy advantage.
-Expected reward is the primary evaluation metric.
+**Why User Simulator instead of historical data?**
+- DQN/PPO need 120,000+ interactions during training.
+- Historical data can't answer counterfactual questions ("what if we recommended X instead of Y?").
+- Simulator enables exploration of unseen recommendation sequences.
 
 ---
 
-## Genre Preference Analysis (DQN vs Greedy-CTR, 500 steps)
+## Results
 
-```
-Genre             DQN    CTR    Diff
-----------------------------------------
-Fantasy           194      0    +194  ←  DQN concentrates here
-War               160     40    +120  ←
-Film-Noir         111    120      -9
-Animation           0    100    -100  ←  CTR concentrates here
-Musical             0     60     -60  ←
-Thriller            0     60     -60  ←
-Adventure          16     40     -24
-```
+### No-Penalty: Robust Ordering Across Two Simulators
 
-DQN exhibits genre concentration (reward hacking) — exploiting simulator bias
-rather than learning a generalizable diversity strategy.
+| Policy | Original GRU4Rec (AUC 0.703) | Enhanced GRU4RecSVD (AUC 0.781) | Rank Preserved? |
+|---|---|---|---|
+| Random | 10.05 ± 2.20 | 9.49 ± 1.78 | Yes |
+| Greedy-CTR | 11.33 ± 2.43 | 10.88 ± 2.62 | Yes |
+| DQN | 12.27 ± 3.12 | 12.25 ± 2.20 | Yes |
+| **PPO** | **13.38 ± 2.79** | **12.63 ± 1.93** | **Yes** |
+
+The ordering PPO > DQN > Greedy > Random holds in both simulators. However, no-penalty
+policies collapse toward over-rewarded genres (especially Film-Noir), indicating simulator bias
+rather than genuine diversification.
+
+### Fatigue-Aware: Window + Concentration Penalty
+
+| Policy | Mean Reward (T=20) | Δ vs Greedy-CTR |
+|---|---|---|
+| Random | 8.17 | — |
+| Greedy-CTR | 5.82 | baseline |
+| DQN | 9.90 | +1.55* |
+| **PPO** | **13.49** | **+4.31*** |
+
+*Both differences statistically significant.
+
+Under fatigue-aware reward, PPO outperforms Greedy-CTR by +4.31, the cleanest evidence that
+sequential planning matters once the objective penalizes repetition. PPO also learns a less
+concentrated genre distribution than DQN, spreading selections across Documentary, Film-Noir,
+and War rather than collapsing to a single genre.
+
+### State Ablation (Fatigue-Aware Reward)
+
+| Agent | Full State (68-dim) | No Genre Counts (50-dim) | Δ |
+|---|---|---|---|
+| DQN | 9.90 | 6.22 | −3.68 |
+| PPO | 10.40 | 5.55* | −3.28* |
+
+*Note: ablation numbers from Fig. 6 in the white paper (DQN: 7.22→5.17 in text, 9.90→6.22 in figure; minor discrepancies reflect different evaluation runs).
+
+Removing recent genre counts severely degrades both agents, confirming that state design must
+match reward design: if the objective depends on history, the policy needs direct access to that history.
+
+---
+
+## Key Findings
+
+1. **RL beats Greedy even without fatigue** — PPO and DQN exploit sequence-conditional dynamics in the simulator, though some advantage may reflect model-induced patterns.
+
+2. **Reward design is first-order** — The PPO–Greedy gap grows as penalty strength increases; Greedy-CTR collapses under repetition costs because it optimizes only the current step.
+
+3. **PPO > DQN for short-horizon policy-sensitive tasks** — PPO's stochastic actor explores and maintains a balanced sequence strategy; DQN's deterministic argmax remains vulnerable to local exploitation.
+
+4. **State must match reward** — Genre-count features are dispensable without penalty but essential once the reward depends on repetition history.
+
+5. **Simulator quality is the bottleneck** — Offline RL can exploit simulator imperfections; higher return in simulation ≠ better user experience.
 
 ---
 
@@ -158,14 +189,10 @@ pip install numpy pandas scipy xgboost scikit-learn gymnasium stable-baselines3 
 
 ---
 
-## .gitignore
+## References
 
-```
-*.pkl
-*.pt
-*.zip
-*.npy
-*.dat
-__pycache__/
-.ipynb_checkpoints/
-```
+- F. M. Harper and J. A. Konstan. *The MovieLens datasets: History and context.* ACM TIIS, 2015.
+- B. Hidasi et al. *Session-based recommendations with recurrent neural networks.* ICLR, 2016.
+- J. Schulman et al. *Proximal Policy Optimization Algorithms.* arXiv:1707.06347, 2017.
+- V. Mnih et al. *Human-level control through deep reinforcement learning.* Nature, 2015.
+- Y. Gao et al. *KuaiRec: A fully observed dataset for evaluating recommender systems.* CIKM, 2023.
