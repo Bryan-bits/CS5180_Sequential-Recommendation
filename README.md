@@ -171,7 +171,7 @@ CS5180-RL-Recommendation/
 ├── README.md
 ├── .gitignore
 ├── notebooks/
-│   └── cs5180_v6_final.ipynb     # Complete pipeline: env + baselines + DQN + PPO
+│   └── cs5180_v9_gru4rrec+PPO&DQN.ipynb     # Complete pipeline: env + baselines + DQN + PPO
 └── data/
     └── README.md                 # Instructions to download MovieLens 1M
 ```
