@@ -5,7 +5,7 @@
 **Subtitle:** Effects of Fatigue-Aware Reward Design on PPO and DQN
 
 **Academic Project:** Reinforcement Learning · Northeastern University  
-**Team:** Bolai Yin · Yuzhe Li · Kai Zhu  
+**Team:** Bryan Yin · Yuzhe Li · Kai Zhu  
 **Dataset:** [MovieLens 1M](https://grouplens.org/datasets/movielens/1m/)
 
 ---
