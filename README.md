@@ -2,7 +2,7 @@
 
 **Effects of Fatigue-Aware Reward Design on PPO and DQN**
 
-Reinforcement Learning
+Reinforcement Learning Project
 Bolai Yin | Yuzhe Li | Kai Zhu  
 Northeastern University
 
@@ -61,7 +61,7 @@ MovieLens 1M historical data           RL Agent (DQN / PPO)
 Train User Simulator:                  Recommends genre to user
   XGBoost (static, AUC ~0.800)                     ↓
   GRU4Rec (AUC 0.703)       →→→→→    Simulator returns reward
-  GRU4RecSVD (AUC 0.781)               sampled from Bernoulli(P(like))
+  GRU4RecSVD (AUC 0.783)               sampled from Bernoulli(P(like))
         ↓                                          ↓
 P(like | user, movie)                  Agent updates policy
                                                    ↓
