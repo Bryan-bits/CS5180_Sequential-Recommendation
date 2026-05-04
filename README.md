@@ -1,13 +1,31 @@
-# CS5180 Simulator-Based Offline Reinforcement Learning for Sequential Recommendation
+# Simulator-Based Offline Reinforcement Learning for Sequential Recommendation
 
 **Effects of Fatigue-Aware Reward Design on PPO and DQN**
 
-CS5180 Reinforcement Learning — Final Project Report  
+Reinforcement Learning
 Bolai Yin | Yuzhe Li | Kai Zhu  
-Northeastern University, Spring 2025
+Northeastern University
 
 ---
 
+## Quick Summary
+
+This project studies whether reinforcement learning can improve sequential recommendation beyond a greedy baseline in an offline setting, where rewards come from a learned user simulator rather than live user feedback.
+
+Using MovieLens 1M, we built an offline reinforcement learning pipeline that compares PPO, DQN, Greedy-CTR, and Random policies, and introduced fatigue-aware reward shaping to penalize repetitive recommendations over a 20-step session.
+
+**Main result:** Under fatigue-aware reward, PPO outperformed Greedy-CTR by +4.31 mean reward, showing that reward design and state design can matter as much as algorithm choice in offline recommendation.
+
+**What this repo demonstrates**
+- Offline reinforcement learning for sequential recommendation
+- Fatigue-aware reward design and state design
+- Policy comparison across PPO, DQN, Greedy-CTR, and Random
+- Experimentation with a learned user simulator
+
+**Tech stack:** Python, PyTorch, Stable-Baselines3, Gymnasium, XGBoost, GRU4Rec, MovieLens 1M  
+**Start here:** Project Overview → MDP Formulation → Results
+
+----
 ## Project Overview
 
 This project frames sequential movie recommendation as a Markov Decision Process (MDP),
