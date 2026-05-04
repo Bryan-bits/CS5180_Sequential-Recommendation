@@ -60,7 +60,7 @@ MovieLens 1M historical data           RL Agent (DQN / PPO)
         ↓                                          ↓
 Train User Simulator:                  Recommends genre to user
   XGBoost (static, AUC ~0.800)                     ↓
-  GRU4Rec (AUC 0.703)       →→→→→    Simulator returns reward
+  GRU4Rec (AUC 0.703)       →→→→→      Simulator returns reward
   GRU4RecSVD (AUC 0.783)               sampled from Bernoulli(P(like))
         ↓                                          ↓
 P(like | user, movie)                  Agent updates policy
